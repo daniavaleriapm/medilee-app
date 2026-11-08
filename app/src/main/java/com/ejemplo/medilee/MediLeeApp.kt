@@ -1,5 +1,6 @@
 package com.ejemplo.medilee   // <-- CAMBIA esto por el package de tu proyecto
 
+import com.ejemplo.medilee.presentation.camara.CamaraScreen
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -78,8 +79,8 @@ fun MediLeeApp() {
                     )
                     Pantalla.Historial -> PantallaHistorial()
                     Pantalla.Ajustes -> PantallaAjustes()
-                    Pantalla.Camara -> PantallaCamara(
-                        onCapturar = { pantalla = Pantalla.Analizando }
+                    Pantalla.Camara -> CamaraScreen(
+                        onFotoCapturada = { pantalla = Pantalla.Analizando }
                     )
                     Pantalla.Analizando -> PantallaAnalizando(
                         onTerminar = { pantalla = Pantalla.Resultado }
@@ -235,29 +236,6 @@ fun PantallaAjustes() {
             TarjetaVerde(Modifier.fillMaxWidth(), onClick = { /* luego: abrir opción */ }) {
                 TextoSerif(texto, size = 14, peso = FontWeight.Bold)
             }
-        }
-    }
-}
-
-@Composable
-fun PantallaCamara(onCapturar: () -> Unit) {
-    val forma = RoundedCornerShape(18.dp)
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(460.dp)
-            .shadow(4.dp, forma)
-            .background(Color.Black, forma),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            TextoSerif("(Cámara en vivo)", Color.White, 20)
-            Spacer(Modifier.height(16.dp))
-            Icon(
-                Icons.Filled.CameraAlt, contentDescription = "Tomar foto",
-                tint = Color.White,
-                modifier = Modifier.size(40.dp).clickable { onCapturar() }
-            )
         }
     }
 }
