@@ -1,4 +1,4 @@
-package com.ejemplo.medilee   // <-- CAMBIA esto por el package de tu proyecto
+package com.ejemplo.medilee
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -22,14 +22,16 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.ejemplo.medilee.util.TTSManager
 import kotlinx.coroutines.delay
 
-// ---------- Colores (aprox. de tu diseño) ----------
+// ---------- Colores ----------
 val VerdeOscuro = Color(0xFF6E9B84)
 val VerdeMenta = Color(0xFF8FC1AA)
 val Amarillo = Color(0xFFE0E3B0)
@@ -44,12 +46,25 @@ enum class Pantalla { Inicio, Historial, Ajustes, Camara, Analizando, Resultado 
 fun MediLeeApp() {
     var pantalla by remember { mutableStateOf(Pantalla.Inicio) }
 
+    // Inicialización del motor de TTS con ciclo de vida
+    val context = LocalContext.current
+    val ttsManager = remember { TTSManager(context) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            ttsManager.shutdown()
+        }
+    }
+
     Scaffold(
         containerColor = VerdeMenta,
         bottomBar = {
             BarraInferior(
                 actual = pantalla,
-                onIr = { pantalla = it }
+                onIr = { nuevaPantalla ->
+                    ttsManager.stop() // Detiene la voz al cambiar de vista
+                    pantalla = nuevaPantalla
+                }
             )
         }
     ) { padding ->
@@ -84,10 +99,26 @@ fun MediLeeApp() {
                     Pantalla.Analizando -> PantallaAnalizando(
                         onTerminar = { pantalla = Pantalla.Resultado }
                     )
-                    Pantalla.Resultado -> PantallaResultado(
-                        onGuardar = { pantalla = Pantalla.Historial },
-                        onRepetir = { /* aquí irá el texto a voz */ }
-                    )
+                    Pantalla.Resultado -> {
+                        val nombreMed = "PARACETAMOL 500 miligramos"
+                        val descMed = "Se usa para aliviar el dolor leve o moderado y bajar la fiebre. Tómalo según lo indicado por el médico."
+                        val textoLectura = "$nombreMed. $descMed"
+
+                        // Se activa la lectura al cargar la pantalla de resultado
+                        LaunchedEffect(Unit) {
+                            ttsManager.speak(textoLectura)
+                        }
+
+                        PantallaResultado(
+                            onGuardar = {
+                                ttsManager.stop()
+                                pantalla = Pantalla.Historial
+                            },
+                            onRepetir = {
+                                ttsManager.speak(textoLectura)
+                            }
+                        )
+                    }
                 }
             }
         }
@@ -264,7 +295,6 @@ fun PantallaCamara(onCapturar: () -> Unit) {
 
 @Composable
 fun PantallaAnalizando(onTerminar: () -> Unit) {
-    // Simula que analiza durante 2 segundos y pasa al resultado
     LaunchedEffect(Unit) {
         delay(2000)
         onTerminar()
