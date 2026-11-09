@@ -15,8 +15,12 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Mic
 import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Settings
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Icon
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -54,15 +58,24 @@ enum class Pantalla { Inicio, Historial, Ajustes, Camara, Analizando, Resultado 
 fun MediLeeApp() {
     var pantalla by remember { mutableStateOf(Pantalla.Inicio) }
 
+    // Estados globales de ajustes
+    var velocidadLectura by remember { mutableFloatStateOf(1.0f) }
+    var multiplicadorTexto by remember { mutableIntStateOf(0) } // -2: Pequeño, 0: Normal, 2: Grande
+    var idiomaEspanol by remember { mutableStateOf(true) }
+
     val context = LocalContext.current
     val ttsManager = remember { TTSManager(context) }
     val scope = rememberCoroutineScope()
 
-    // Instancia de la Base de Datos Room
+    // Actualizar configuración en TTSManager
+    LaunchedEffect(velocidadLectura, idiomaEspanol) {
+        ttsManager.setSpeechRate(velocidadLectura)
+        val locale = if (idiomaEspanol) Locale("es", "ES") else Locale.US
+        ttsManager.setLanguage(locale)
+    }
+
     val database = remember { AppDatabase.getDatabase(context) }
     val medicamentoDao = database.medicamentoDao()
-
-    // Obtener historial en tiempo real desde la Base de Datos
     val historialList by medicamentoDao.obtenerHistorial().collectAsState(initial = emptyList())
 
     DisposableEffect(Unit) {
@@ -96,7 +109,7 @@ fun MediLeeApp() {
                 Text(
                     "MediLee",
                     color = TextoVerde,
-                    fontSize = 22.sp,
+                    fontSize = (22 + multiplicadorTexto).sp,
                     fontWeight = FontWeight.Bold,
                     fontFamily = FontFamily.Serif
                 )
@@ -105,20 +118,41 @@ fun MediLeeApp() {
                 when (pantalla) {
                     Pantalla.Inicio -> PantallaInicio(
                         historial = historialList,
+                        deltaTamaño = multiplicadorTexto,
                         onCamara = { pantalla = Pantalla.Camara }
                     )
-                    Pantalla.Historial -> PantallaHistorial(historial = historialList)
-                    Pantalla.Ajustes -> PantallaAjustes()
+                    Pantalla.Historial -> PantallaHistorial(
+                        historial = historialList,
+                        deltaTamaño = multiplicadorTexto
+                    )
+                    Pantalla.Ajustes -> PantallaAjustes(
+                        velocidad = velocidadLectura,
+                        onVelocidadChange = { velocidadLectura = it },
+                        multiplicadorTexto = multiplicadorTexto,
+                        onTamañoChange = { multiplicadorTexto = it },
+                        esEspanol = idiomaEspanol,
+                        onIdiomaChange = { idiomaEspanol = it },
+                        onProbarVoz = {
+                            val demo = if (idiomaEspanol) "Prueba de velocidad de lectura" else "Speech rate test"
+                            ttsManager.speak(demo)
+                        }
+                    )
                     Pantalla.Camara -> PantallaCamara(
+                        deltaTamaño = multiplicadorTexto,
                         onCapturar = { pantalla = Pantalla.Analizando }
                     )
                     Pantalla.Analizando -> PantallaAnalizando(
+                        deltaTamaño = multiplicadorTexto,
                         onTerminar = { pantalla = Pantalla.Resultado }
                     )
                     Pantalla.Resultado -> {
                         val nombreMed = "PARACETAMOL"
                         val dosisMed = "500 mg"
-                        val descMed = "Se usa para aliviar el dolor leve o moderado y bajar la fiebre."
+                        val descMed = if (idiomaEspanol) {
+                            "Se usa para aliviar el dolor leve o moderado y bajar la fiebre."
+                        } else {
+                            "Used to relieve mild to moderate pain and reduce fever."
+                        }
                         val textoLectura = "$nombreMed $dosisMed. $descMed"
 
                         LaunchedEffect(Unit) {
@@ -126,6 +160,7 @@ fun MediLeeApp() {
                         }
 
                         PantallaResultado(
+                            deltaTamaño = multiplicadorTexto,
                             onGuardar = {
                                 ttsManager.stop()
                                 scope.launch {
@@ -239,7 +274,11 @@ fun ItemBarra(icono: ImageVector, seleccionado: Boolean, onClick: () -> Unit) {
 
 // ---------- Pantallas ----------
 @Composable
-fun PantallaInicio(historial: List<MedicamentoEntity>, onCamara: () -> Unit) {
+fun PantallaInicio(
+    historial: List<MedicamentoEntity>,
+    deltaTamaño: Int,
+    onCamara: () -> Unit
+) {
     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
         TarjetaVerde(
             modifier = Modifier.fillMaxWidth().height(260.dp),
@@ -253,12 +292,12 @@ fun PantallaInicio(historial: List<MedicamentoEntity>, onCamara: () -> Unit) {
         Spacer(Modifier.height(12.dp))
 
         TarjetaAmarilla(Modifier.fillMaxWidth()) {
-            TextoSerif("Medicamentos recientes:", TextoVerde, 14, FontWeight.Bold)
+            TextoSerif("Medicamentos recientes:", TextoVerde, 14 + deltaTamaño, FontWeight.Bold)
             if (historial.isEmpty()) {
-                TextoSerif("• No hay medicamentos escaneados", TextoVerde, 13)
+                TextoSerif("• No hay medicamentos escaneados", TextoVerde, 13 + deltaTamaño)
             } else {
                 historial.take(2).forEach { item ->
-                    TextoSerif("• ${item.nombre} ${item.dosis} (${item.fecha})", TextoVerde, 13)
+                    TextoSerif("• ${item.nombre} ${item.dosis} (${item.fecha})", TextoVerde, 13 + deltaTamaño)
                 }
             }
         }
@@ -273,19 +312,19 @@ fun PantallaInicio(historial: List<MedicamentoEntity>, onCamara: () -> Unit) {
 }
 
 @Composable
-fun PantallaHistorial(historial: List<MedicamentoEntity>) {
+fun PantallaHistorial(historial: List<MedicamentoEntity>, deltaTamaño: Int) {
     if (historial.isEmpty()) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-            TextoSerif("Aún no tienes historial guardado", TextoVerde, 16, FontWeight.Bold)
+            TextoSerif("Aún no tienes historial guardado", TextoVerde, 16 + deltaTamaño, FontWeight.Bold)
         }
     } else {
         LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
             items(historial) { med ->
                 TarjetaVerde(Modifier.fillMaxWidth()) {
                     Column {
-                        TextoSerif("${med.nombre} ${med.dosis}", size = 16, peso = FontWeight.Bold)
-                        TextoSerif(med.descripcion, size = 13)
-                        TextoSerif("Guardado: ${med.fecha}", size = 11, color = Amarillo.copy(alpha = 0.8f))
+                        TextoSerif("${med.nombre} ${med.dosis}", size = 16 + deltaTamaño, peso = FontWeight.Bold)
+                        TextoSerif(med.descripcion, size = 13 + deltaTamaño)
+                        TextoSerif("Guardado: ${med.fecha}", size = 11 + deltaTamaño, color = Amarillo.copy(alpha = 0.8f))
                     }
                 }
             }
@@ -294,23 +333,116 @@ fun PantallaHistorial(historial: List<MedicamentoEntity>) {
 }
 
 @Composable
-fun PantallaAjustes() {
-    val opciones = listOf(
-        "Velocidad de texto (-- 0 --)",
-        "Tamaño de texto ( A A A )",
-        "Idioma de lectura ( Español)"
-    )
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        opciones.forEach { texto ->
-            TarjetaVerde(Modifier.fillMaxWidth(), onClick = { }) {
-                TextoSerif(texto, size = 14, peso = FontWeight.Bold)
+fun PantallaAjustes(
+    velocidad: Float,
+    onVelocidadChange: (Float) -> Unit,
+    multiplicadorTexto: Int,
+    onTamañoChange: (Int) -> Unit,
+    esEspanol: Boolean,
+    onIdiomaChange: (Boolean) -> Unit,
+    onProbarVoz: () -> Unit
+) {
+    Column(
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier.fillMaxSize()
+    ) {
+        // 1. Velocidad de texto
+        TarjetaVerde(Modifier.fillMaxWidth()) {
+            Column {
+                TextoSerif("Velocidad de texto: ${String.format("%.1fx", velocidad)}", size = 15 + multiplicadorTexto, peso = FontWeight.Bold)
+                Slider(
+                    value = velocidad,
+                    onValueChange = onVelocidadChange,
+                    valueRange = 0.5f..2.0f,
+                    colors = SliderDefaults.colors(
+                        thumbColor = Amarillo,
+                        activeTrackColor = Amarillo,
+                        inactiveTrackColor = FondoClaro
+                    )
+                )
+            }
+        }
+
+        // 2. Tamaño de texto
+        TarjetaVerde(Modifier.fillMaxWidth()) {
+            Column {
+                TextoSerif("Tamaño de texto", size = 15 + multiplicadorTexto, peso = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    Button(
+                        onClick = { onTamañoChange(-2) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (multiplicadorTexto == -2) Amarillo else FondoClaro
+                        )
+                    ) {
+                        Text("Pequeño", color = TextoVerde)
+                    }
+                    Button(
+                        onClick = { onTamañoChange(0) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (multiplicadorTexto == 0) Amarillo else FondoClaro
+                        )
+                    ) {
+                        Text("Normal", color = TextoVerde)
+                    }
+                    Button(
+                        onClick = { onTamañoChange(3) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (multiplicadorTexto == 3) Amarillo else FondoClaro
+                        )
+                    ) {
+                        Text("Grande", color = TextoVerde)
+                    }
+                }
+            }
+        }
+
+        // 3. Idioma de lectura
+        TarjetaVerde(Modifier.fillMaxWidth()) {
+            Column {
+                TextoSerif("Idioma de lectura", size = 15 + multiplicadorTexto, peso = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceEvenly
+                ) {
+                    Button(
+                        onClick = { onIdiomaChange(true) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (esEspanol) Amarillo else FondoClaro
+                        )
+                    ) {
+                        Text("Español", color = TextoVerde)
+                    }
+                    Button(
+                        onClick = { onIdiomaChange(false) },
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = if (!esEspanol) Amarillo else FondoClaro
+                        )
+                    ) {
+                        Text("English", color = TextoVerde)
+                    }
+                }
+            }
+        }
+
+        // Botón para probar la voz
+        TarjetaVerde(
+            modifier = Modifier.fillMaxWidth(),
+            onClick = onProbarVoz
+        ) {
+            Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
+                TextoSerif("🔊 Probar voz actual", size = 16 + multiplicadorTexto, peso = FontWeight.Bold)
             }
         }
     }
 }
 
 @Composable
-fun PantallaCamara(onCapturar: () -> Unit) {
+fun PantallaCamara(deltaTamaño: Int, onCapturar: () -> Unit) {
     val forma = RoundedCornerShape(18.dp)
     Box(
         modifier = Modifier
@@ -321,7 +453,7 @@ fun PantallaCamara(onCapturar: () -> Unit) {
         contentAlignment = Alignment.Center
     ) {
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            TextoSerif("(Cámara en vivo)", Color.White, 20)
+            TextoSerif("(Cámara en vivo)", Color.White, 20 + deltaTamaño)
             Spacer(Modifier.height(16.dp))
             Icon(
                 Icons.Filled.CameraAlt, contentDescription = "Tomar foto",
@@ -333,7 +465,7 @@ fun PantallaCamara(onCapturar: () -> Unit) {
 }
 
 @Composable
-fun PantallaAnalizando(onTerminar: () -> Unit) {
+fun PantallaAnalizando(deltaTamaño: Int, onTerminar: () -> Unit) {
     LaunchedEffect(Unit) {
         delay(2000)
         onTerminar()
@@ -354,28 +486,32 @@ fun PantallaAnalizando(onTerminar: () -> Unit) {
         TarjetaAmarilla(Modifier.fillMaxWidth()) {
             TextoSerif(
                 "Analizando el medicamento, un momento",
-                TextoVerde, 14, align = TextAlign.Center
+                TextoVerde, 14 + deltaTamaño, align = TextAlign.Center
             )
         }
     }
 }
 
 @Composable
-fun PantallaResultado(onGuardar: () -> Unit, onRepetir: () -> Unit) {
+fun PantallaResultado(
+    deltaTamaño: Int,
+    onGuardar: () -> Unit,
+    onRepetir: () -> Unit
+) {
     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
         TarjetaVerde(Modifier.fillMaxWidth()) {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                TextoSerif("PARACETAMOL", Color.White, 26, FontWeight.Bold)
-                TextoSerif("500 mg", Color.White, 26, FontWeight.Bold)
+                TextoSerif("PARACETAMOL", Color.White, 26 + deltaTamaño, FontWeight.Bold)
+                TextoSerif("500 mg", Color.White, 26 + deltaTamaño, FontWeight.Bold)
             }
         }
         Spacer(Modifier.height(12.dp))
 
         TarjetaAmarilla(Modifier.fillMaxWidth()) {
-            TextoSerif("Descripción:", TextoVerde, 14, FontWeight.Bold)
+            TextoSerif("Descripción:", TextoVerde, 14 + deltaTamaño, FontWeight.Bold)
             TextoSerif(
                 "“Se usa para aliviar el dolor leve o moderado y bajar la fiebre.”",
-                TextoVerde, 14
+                TextoVerde, 14 + deltaTamaño
             )
         }
         Spacer(Modifier.height(12.dp))
@@ -383,12 +519,12 @@ fun PantallaResultado(onGuardar: () -> Unit, onRepetir: () -> Unit) {
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
             TarjetaVerde(Modifier.weight(1f), onClick = onGuardar) {
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    TextoSerif("Guardar", size = 14)
+                    TextoSerif("Guardar", size = 14 + deltaTamaño)
                 }
             }
             TarjetaVerde(Modifier.weight(1f), onClick = onRepetir) {
                 Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                    TextoSerif("Repetir", size = 14)
+                    TextoSerif("Repetir", size = 14 + deltaTamaño)
                 }
             }
         }
