@@ -60,29 +60,33 @@ fun MediLeeApp() {
 
     // Estados globales de ajustes
     var velocidadLectura by remember { mutableFloatStateOf(1.0f) }
-    var multiplicadorTexto by remember { mutableIntStateOf(0) } // -2: Pequeño, 0: Normal, 2: Grande
+    var multiplicadorTexto by remember { mutableIntStateOf(0) } // -2: Pequeño, 0: Normal, 3: Grande
     var idiomaEspanol by remember { mutableStateOf(true) }
 
     val context = LocalContext.current
-    val ttsManager = remember { TTSManager(context) }
+    var ttsManager by remember { mutableStateOf<TTSManager?>(null) }
     val scope = rememberCoroutineScope()
 
-    // Actualizar configuración en TTSManager
-    LaunchedEffect(velocidadLectura, idiomaEspanol) {
-        ttsManager.setSpeechRate(velocidadLectura)
-        val locale = if (idiomaEspanol) Locale("es", "ES") else Locale.US
-        ttsManager.setLanguage(locale)
+    // Inicialización segura de TTSManager en el ciclo de vida
+    DisposableEffect(context) {
+        val manager = TTSManager(context)
+        ttsManager = manager
+        onDispose {
+            manager.shutdown()
+        }
     }
 
+    // Actualización de parámetros TTS en tiempo real
+    LaunchedEffect(velocidadLectura, idiomaEspanol, ttsManager) {
+        ttsManager?.setSpeechRate(velocidadLectura)
+        val locale = if (idiomaEspanol) Locale("es", "ES") else Locale.US
+        ttsManager?.setLanguage(locale)
+    }
+
+    // Instancia de Room Database
     val database = remember { AppDatabase.getDatabase(context) }
     val medicamentoDao = database.medicamentoDao()
     val historialList by medicamentoDao.obtenerHistorial().collectAsState(initial = emptyList())
-
-    DisposableEffect(Unit) {
-        onDispose {
-            ttsManager.shutdown()
-        }
-    }
 
     Scaffold(
         containerColor = VerdeMenta,
@@ -90,7 +94,7 @@ fun MediLeeApp() {
             BarraInferior(
                 actual = pantalla,
                 onIr = { nuevaPantalla ->
-                    ttsManager.stop()
+                    ttsManager?.stop()
                     pantalla = nuevaPantalla
                 }
             )
@@ -134,7 +138,7 @@ fun MediLeeApp() {
                         onIdiomaChange = { idiomaEspanol = it },
                         onProbarVoz = {
                             val demo = if (idiomaEspanol) "Prueba de velocidad de lectura" else "Speech rate test"
-                            ttsManager.speak(demo)
+                            ttsManager?.speak(demo)
                         }
                     )
                     Pantalla.Camara -> PantallaCamara(
@@ -156,13 +160,13 @@ fun MediLeeApp() {
                         val textoLectura = "$nombreMed $dosisMed. $descMed"
 
                         LaunchedEffect(Unit) {
-                            ttsManager.speak(textoLectura)
+                            ttsManager?.speak(textoLectura)
                         }
 
                         PantallaResultado(
                             deltaTamaño = multiplicadorTexto,
                             onGuardar = {
-                                ttsManager.stop()
+                                ttsManager?.stop()
                                 scope.launch {
                                     val fechaActual = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
                                     medicamentoDao.insertarMedicamento(
@@ -177,7 +181,7 @@ fun MediLeeApp() {
                                 }
                             },
                             onRepetir = {
-                                ttsManager.speak(textoLectura)
+                                ttsManager?.speak(textoLectura)
                             }
                         )
                     }
