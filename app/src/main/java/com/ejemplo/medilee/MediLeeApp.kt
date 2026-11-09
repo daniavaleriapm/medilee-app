@@ -4,6 +4,8 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
@@ -28,8 +30,14 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.ejemplo.medilee.data.AppDatabase
+import com.ejemplo.medilee.data.MedicamentoEntity
 import com.ejemplo.medilee.util.TTSManager
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 // ---------- Colores ----------
 val VerdeOscuro = Color(0xFF6E9B84)
@@ -46,9 +54,16 @@ enum class Pantalla { Inicio, Historial, Ajustes, Camara, Analizando, Resultado 
 fun MediLeeApp() {
     var pantalla by remember { mutableStateOf(Pantalla.Inicio) }
 
-    // Inicialización del motor de TTS con ciclo de vida
     val context = LocalContext.current
     val ttsManager = remember { TTSManager(context) }
+    val scope = rememberCoroutineScope()
+
+    // Instancia de la Base de Datos Room
+    val database = remember { AppDatabase.getDatabase(context) }
+    val medicamentoDao = database.medicamentoDao()
+
+    // Obtener historial en tiempo real desde la Base de Datos
+    val historialList by medicamentoDao.obtenerHistorial().collectAsState(initial = emptyList())
 
     DisposableEffect(Unit) {
         onDispose {
@@ -62,7 +77,7 @@ fun MediLeeApp() {
             BarraInferior(
                 actual = pantalla,
                 onIr = { nuevaPantalla ->
-                    ttsManager.stop() // Detiene la voz al cambiar de vista
+                    ttsManager.stop()
                     pantalla = nuevaPantalla
                 }
             )
@@ -89,9 +104,10 @@ fun MediLeeApp() {
 
                 when (pantalla) {
                     Pantalla.Inicio -> PantallaInicio(
+                        historial = historialList,
                         onCamara = { pantalla = Pantalla.Camara }
                     )
-                    Pantalla.Historial -> PantallaHistorial()
+                    Pantalla.Historial -> PantallaHistorial(historial = historialList)
                     Pantalla.Ajustes -> PantallaAjustes()
                     Pantalla.Camara -> PantallaCamara(
                         onCapturar = { pantalla = Pantalla.Analizando }
@@ -100,11 +116,11 @@ fun MediLeeApp() {
                         onTerminar = { pantalla = Pantalla.Resultado }
                     )
                     Pantalla.Resultado -> {
-                        val nombreMed = "PARACETAMOL 500 miligramos"
-                        val descMed = "Se usa para aliviar el dolor leve o moderado y bajar la fiebre. Tómalo según lo indicado por el médico."
-                        val textoLectura = "$nombreMed. $descMed"
+                        val nombreMed = "PARACETAMOL"
+                        val dosisMed = "500 mg"
+                        val descMed = "Se usa para aliviar el dolor leve o moderado y bajar la fiebre."
+                        val textoLectura = "$nombreMed $dosisMed. $descMed"
 
-                        // Se activa la lectura al cargar la pantalla de resultado
                         LaunchedEffect(Unit) {
                             ttsManager.speak(textoLectura)
                         }
@@ -112,7 +128,18 @@ fun MediLeeApp() {
                         PantallaResultado(
                             onGuardar = {
                                 ttsManager.stop()
-                                pantalla = Pantalla.Historial
+                                scope.launch {
+                                    val fechaActual = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
+                                    medicamentoDao.insertarMedicamento(
+                                        MedicamentoEntity(
+                                            nombre = nombreMed,
+                                            dosis = dosisMed,
+                                            descripcion = descMed,
+                                            fecha = fechaActual
+                                        )
+                                    )
+                                    pantalla = Pantalla.Historial
+                                }
                             },
                             onRepetir = {
                                 ttsManager.speak(textoLectura)
@@ -212,7 +239,7 @@ fun ItemBarra(icono: ImageVector, seleccionado: Boolean, onClick: () -> Unit) {
 
 // ---------- Pantallas ----------
 @Composable
-fun PantallaInicio(onCamara: () -> Unit) {
+fun PantallaInicio(historial: List<MedicamentoEntity>, onCamara: () -> Unit) {
     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
         TarjetaVerde(
             modifier = Modifier.fillMaxWidth().height(260.dp),
@@ -227,8 +254,13 @@ fun PantallaInicio(onCamara: () -> Unit) {
 
         TarjetaAmarilla(Modifier.fillMaxWidth()) {
             TextoSerif("Medicamentos recientes:", TextoVerde, 14, FontWeight.Bold)
-            TextoSerif("• Paracetamol (hoy 8:00am)", TextoVerde, 13)
-            TextoSerif("• Losartán (ayer)", TextoVerde, 13)
+            if (historial.isEmpty()) {
+                TextoSerif("• No hay medicamentos escaneados", TextoVerde, 13)
+            } else {
+                historial.take(2).forEach { item ->
+                    TextoSerif("• ${item.nombre} ${item.dosis} (${item.fecha})", TextoVerde, 13)
+                }
+            }
         }
 
         Spacer(Modifier.weight(1f))
@@ -241,15 +273,22 @@ fun PantallaInicio(onCamara: () -> Unit) {
 }
 
 @Composable
-fun PantallaHistorial() {
-    val items = listOf(
-        "Paracetamol 500mg\nhoy, 8:00am",
-        "Losartán 50mg\nayer, 9:00pm",
-        "Metformina 850mg\nlun, 2:00pm"
-    )
-    Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
-        items.forEach { texto ->
-            TarjetaVerde(Modifier.fillMaxWidth()) { TextoSerif(texto, size = 14) }
+fun PantallaHistorial(historial: List<MedicamentoEntity>) {
+    if (historial.isEmpty()) {
+        Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+            TextoSerif("Aún no tienes historial guardado", TextoVerde, 16, FontWeight.Bold)
+        }
+    } else {
+        LazyColumn(verticalArrangement = Arrangement.spacedBy(12.dp)) {
+            items(historial) { med ->
+                TarjetaVerde(Modifier.fillMaxWidth()) {
+                    Column {
+                        TextoSerif("${med.nombre} ${med.dosis}", size = 16, peso = FontWeight.Bold)
+                        TextoSerif(med.descripcion, size = 13)
+                        TextoSerif("Guardado: ${med.fecha}", size = 11, color = Amarillo.copy(alpha = 0.8f))
+                    }
+                }
+            }
         }
     }
 }
@@ -263,7 +302,7 @@ fun PantallaAjustes() {
     )
     Column(verticalArrangement = Arrangement.spacedBy(12.dp)) {
         opciones.forEach { texto ->
-            TarjetaVerde(Modifier.fillMaxWidth(), onClick = { /* luego: abrir opción */ }) {
+            TarjetaVerde(Modifier.fillMaxWidth(), onClick = { }) {
                 TextoSerif(texto, size = 14, peso = FontWeight.Bold)
             }
         }
@@ -335,8 +374,7 @@ fun PantallaResultado(onGuardar: () -> Unit, onRepetir: () -> Unit) {
         TarjetaAmarilla(Modifier.fillMaxWidth()) {
             TextoSerif("Descripción:", TextoVerde, 14, FontWeight.Bold)
             TextoSerif(
-                "“Se usa para aliviar el dolor leve o moderado y bajar la fiebre. " +
-                        "Tómalo según lo indicado por el médico”",
+                "“Se usa para aliviar el dolor leve o moderado y bajar la fiebre.”",
                 TextoVerde, 14
             )
         }
