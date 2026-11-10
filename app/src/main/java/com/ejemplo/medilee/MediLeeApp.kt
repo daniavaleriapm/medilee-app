@@ -1,6 +1,10 @@
 package com.ejemplo.medilee
 
 import androidx.compose.foundation.background
+import androidx.compose.runtime.saveable.rememberSaveable
+import com.ejemplo.medilee.domain.model.Medicamento
+import com.ejemplo.medilee.presentation.analisis.AnalisisScreen
+import com.ejemplo.medilee.presentation.camara.CamaraScreen
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -56,7 +60,10 @@ enum class Pantalla { Inicio, Historial, Ajustes, Camara, Analizando, Resultado 
 // ---------- App principal ----------
 @Composable
 fun MediLeeApp() {
-    var pantalla by remember { mutableStateOf(Pantalla.Inicio) }
+    var pantalla by remember { mutableStateOf(Pantalla.Inicio)
+    }
+    var rutaFoto by rememberSaveable { mutableStateOf<String?>(null) }
+    var medicamentoDetectado by remember { mutableStateOf<Medicamento?>(null) }
 
     // Estados globales de ajustes
     var velocidadLectura by remember { mutableFloatStateOf(1.0f) }
@@ -121,6 +128,7 @@ fun MediLeeApp() {
                         deltaTamaño = multiplicadorTexto,
                         onCamara = { pantalla = Pantalla.Camara }
                     )
+<<<<<<< HEAD
                     Pantalla.Historial -> PantallaHistorial(
                         historial = historialList,
                         deltaTamaño = multiplicadorTexto
@@ -144,7 +152,26 @@ fun MediLeeApp() {
                     Pantalla.Analizando -> PantallaAnalizando(
                         deltaTamaño = multiplicadorTexto,
                         onTerminar = { pantalla = Pantalla.Resultado }
+=======
+                    Pantalla.Historial -> PantallaHistorial(historial = historialList)
+                    Pantalla.Ajustes -> PantallaAjustes()
+                    Pantalla.Camara -> CamaraScreen(
+                        onFotoCapturada = { ruta ->
+                            rutaFoto = ruta
+                            pantalla = Pantalla.Analizando
+                        }
+>>>>>>> feature/integracion-ocr-api
                     )
+                    Pantalla.Analizando -> {
+                        val ruta = rutaFoto
+                        if (ruta != null) {
+                            AnalisisScreen(
+                                rutaFoto = ruta,
+                                onResultado = { medicamentoDetectado = it; pantalla = Pantalla.Resultado },
+                                onVolverACamara = { pantalla = Pantalla.Camara }
+                            )
+                        }
+                    }
                     Pantalla.Resultado -> {
                         val nombreMed = "PARACETAMOL"
                         val dosisMed = "500 mg"
