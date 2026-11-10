@@ -6,14 +6,12 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CameraAlt
 import androidx.compose.material.icons.filled.History
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Mic
-import androidx.compose.material.icons.filled.MoreHoriz
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
@@ -23,6 +21,7 @@ import androidx.compose.material3.Slider
 import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.shadow
@@ -36,8 +35,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ejemplo.medilee.data.AppDatabase
 import com.ejemplo.medilee.data.MedicamentoEntity
+import com.ejemplo.medilee.domain.model.Medicamento
+import com.ejemplo.medilee.domain.usecase.DescripcionMedicamento
+import com.ejemplo.medilee.presentation.analisis.AnalisisScreen
+import com.ejemplo.medilee.presentation.camara.CamaraScreen
 import com.ejemplo.medilee.util.TTSManager
-import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
@@ -57,10 +59,12 @@ enum class Pantalla { Inicio, Historial, Ajustes, Camara, Analizando, Resultado 
 @Composable
 fun MediLeeApp() {
     var pantalla by remember { mutableStateOf(Pantalla.Inicio) }
+    var rutaFoto by rememberSaveable { mutableStateOf<String?>(null) }
+    var medicamentoDetectado by remember { mutableStateOf<Medicamento?>(null) }
 
     // Estados globales de ajustes
     var velocidadLectura by remember { mutableFloatStateOf(1.0f) }
-    var multiplicadorTexto by remember { mutableIntStateOf(0) } // -2: Pequeño, 0: Normal, 2: Grande
+    var multiplicadorTexto by remember { mutableIntStateOf(0) } // -2: Pequeño, 0: Normal, 3: Grande
     var idiomaEspanol by remember { mutableStateOf(true) }
 
     val context = LocalContext.current
@@ -119,7 +123,18 @@ fun MediLeeApp() {
                     Pantalla.Inicio -> PantallaInicio(
                         historial = historialList,
                         deltaTamaño = multiplicadorTexto,
-                        onCamara = { pantalla = Pantalla.Camara }
+                        onCamara = { pantalla = Pantalla.Camara },
+                        onLeerUltimo = {
+                            val ultimo = historialList.firstOrNull()
+                            val texto = if (ultimo != null) {
+                                "${ultimo.nombre} ${ultimo.dosis}. ${ultimo.descripcion}"
+                            } else if (idiomaEspanol) {
+                                "Aún no hay medicamentos guardados"
+                            } else {
+                                "No saved medications yet"
+                            }
+                            ttsManager.speak(texto)
+                        }
                     )
                     Pantalla.Historial -> PantallaHistorial(
                         historial = historialList,
@@ -137,49 +152,62 @@ fun MediLeeApp() {
                             ttsManager.speak(demo)
                         }
                     )
-                    Pantalla.Camara -> PantallaCamara(
-                        deltaTamaño = multiplicadorTexto,
-                        onCapturar = { pantalla = Pantalla.Analizando }
+                    Pantalla.Camara -> CamaraScreen(
+                        onFotoCapturada = { ruta ->
+                            rutaFoto = ruta
+                            pantalla = Pantalla.Analizando
+                        }
                     )
-                    Pantalla.Analizando -> PantallaAnalizando(
-                        deltaTamaño = multiplicadorTexto,
-                        onTerminar = { pantalla = Pantalla.Resultado }
-                    )
+                    Pantalla.Analizando -> {
+                        val ruta = rutaFoto
+                        if (ruta != null) {
+                            AnalisisScreen(
+                                rutaFoto = ruta,
+                                onResultado = { medicamentoDetectado = it; pantalla = Pantalla.Resultado },
+                                onVolverACamara = { pantalla = Pantalla.Camara }
+                            )
+                        }
+                    }
                     Pantalla.Resultado -> {
-                        val nombreMed = "PARACETAMOL"
-                        val dosisMed = "500 mg"
-                        val descMed = if (idiomaEspanol) {
-                            "Se usa para aliviar el dolor leve o moderado y bajar la fiebre."
+                        val medicamento = medicamentoDetectado
+                        if (medicamento == null) {
+                            // No hay datos que mostrar: volver al inicio
+                            LaunchedEffect(Unit) { pantalla = Pantalla.Inicio }
                         } else {
-                            "Used to relieve mild to moderate pain and reduce fever."
-                        }
-                        val textoLectura = "$nombreMed $dosisMed. $descMed"
+                            val nombreMed = medicamento.nombre.uppercase()
+                            val dosisMed = medicamento.dosis.orEmpty()
+                            val descMed = DescripcionMedicamento.para(medicamento.nombre, idiomaEspanol)
+                            val textoLectura = "$nombreMed $dosisMed. $descMed"
 
-                        LaunchedEffect(Unit) {
-                            ttsManager.speak(textoLectura)
-                        }
-
-                        PantallaResultado(
-                            deltaTamaño = multiplicadorTexto,
-                            onGuardar = {
-                                ttsManager.stop()
-                                scope.launch {
-                                    val fechaActual = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
-                                    medicamentoDao.insertarMedicamento(
-                                        MedicamentoEntity(
-                                            nombre = nombreMed,
-                                            dosis = dosisMed,
-                                            descripcion = descMed,
-                                            fecha = fechaActual
-                                        )
-                                    )
-                                    pantalla = Pantalla.Historial
-                                }
-                            },
-                            onRepetir = {
+                            LaunchedEffect(medicamento) {
                                 ttsManager.speak(textoLectura)
                             }
-                        )
+
+                            PantallaResultado(
+                                nombre = nombreMed,
+                                dosis = dosisMed,
+                                descripcion = descMed,
+                                deltaTamaño = multiplicadorTexto,
+                                onGuardar = {
+                                    ttsManager.stop()
+                                    scope.launch {
+                                        val fechaActual = SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(Date())
+                                        medicamentoDao.insertarMedicamento(
+                                            MedicamentoEntity(
+                                                nombre = nombreMed,
+                                                dosis = dosisMed,
+                                                descripcion = descMed,
+                                                fecha = fechaActual
+                                            )
+                                        )
+                                        pantalla = Pantalla.Historial
+                                    }
+                                },
+                                onRepetir = {
+                                    ttsManager.speak(textoLectura)
+                                }
+                            )
+                        }
                     }
                 }
             }
@@ -277,7 +305,8 @@ fun ItemBarra(icono: ImageVector, seleccionado: Boolean, onClick: () -> Unit) {
 fun PantallaInicio(
     historial: List<MedicamentoEntity>,
     deltaTamaño: Int,
-    onCamara: () -> Unit
+    onCamara: () -> Unit,
+    onLeerUltimo: () -> Unit
 ) {
     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
         TarjetaVerde(
@@ -304,8 +333,9 @@ fun PantallaInicio(
 
         Spacer(Modifier.weight(1f))
         Icon(
-            Icons.Filled.Mic, contentDescription = "Hablar",
-            tint = Color(0xFF666666), modifier = Modifier.size(56.dp)
+            Icons.Filled.Mic, contentDescription = "Leer último medicamento",
+            tint = Color(0xFF666666),
+            modifier = Modifier.clickable { onLeerUltimo() }.padding(8.dp).size(56.dp)
         )
         Spacer(Modifier.height(16.dp))
     }
@@ -442,58 +472,10 @@ fun PantallaAjustes(
 }
 
 @Composable
-fun PantallaCamara(deltaTamaño: Int, onCapturar: () -> Unit) {
-    val forma = RoundedCornerShape(18.dp)
-    Box(
-        modifier = Modifier
-            .fillMaxWidth()
-            .height(460.dp)
-            .shadow(4.dp, forma)
-            .background(Color.Black, forma),
-        contentAlignment = Alignment.Center
-    ) {
-        Column(horizontalAlignment = Alignment.CenterHorizontally) {
-            TextoSerif("(Cámara en vivo)", Color.White, 20 + deltaTamaño)
-            Spacer(Modifier.height(16.dp))
-            Icon(
-                Icons.Filled.CameraAlt, contentDescription = "Tomar foto",
-                tint = Color.White,
-                modifier = Modifier.size(40.dp).clickable { onCapturar() }
-            )
-        }
-    }
-}
-
-@Composable
-fun PantallaAnalizando(deltaTamaño: Int, onTerminar: () -> Unit) {
-    LaunchedEffect(Unit) {
-        delay(2000)
-        onTerminar()
-    }
-
-    Column(
-        Modifier.fillMaxSize(),
-        horizontalAlignment = Alignment.CenterHorizontally,
-        verticalArrangement = Arrangement.Center
-    ) {
-        Box(
-            Modifier.size(180.dp).shadow(6.dp, CircleShape).background(VerdeOscuro, CircleShape),
-            contentAlignment = Alignment.Center
-        ) {
-            Icon(Icons.Filled.MoreHoriz, null, tint = Color.White, modifier = Modifier.size(56.dp))
-        }
-        Spacer(Modifier.height(32.dp))
-        TarjetaAmarilla(Modifier.fillMaxWidth()) {
-            TextoSerif(
-                "Analizando el medicamento, un momento",
-                TextoVerde, 14 + deltaTamaño, align = TextAlign.Center
-            )
-        }
-    }
-}
-
-@Composable
 fun PantallaResultado(
+    nombre: String,
+    dosis: String,
+    descripcion: String,
     deltaTamaño: Int,
     onGuardar: () -> Unit,
     onRepetir: () -> Unit
@@ -501,18 +483,23 @@ fun PantallaResultado(
     Column(Modifier.fillMaxSize(), horizontalAlignment = Alignment.CenterHorizontally) {
         TarjetaVerde(Modifier.fillMaxWidth()) {
             Column(Modifier.fillMaxWidth(), horizontalAlignment = Alignment.CenterHorizontally) {
-                TextoSerif("PARACETAMOL", Color.White, 26 + deltaTamaño, FontWeight.Bold)
-                TextoSerif("500 mg", Color.White, 26 + deltaTamaño, FontWeight.Bold)
+                TextoSerif(
+                    nombre, Color.White, 26 + deltaTamaño, FontWeight.Bold,
+                    align = TextAlign.Center
+                )
+                if (dosis.isNotBlank()) {
+                    TextoSerif(
+                        dosis, Color.White, 26 + deltaTamaño, FontWeight.Bold,
+                        align = TextAlign.Center
+                    )
+                }
             }
         }
         Spacer(Modifier.height(12.dp))
 
         TarjetaAmarilla(Modifier.fillMaxWidth()) {
             TextoSerif("Descripción:", TextoVerde, 14 + deltaTamaño, FontWeight.Bold)
-            TextoSerif(
-                "“Se usa para aliviar el dolor leve o moderado y bajar la fiebre.”",
-                TextoVerde, 14 + deltaTamaño
-            )
+            TextoSerif("“$descripcion”", TextoVerde, 14 + deltaTamaño)
         }
         Spacer(Modifier.height(12.dp))
 
